@@ -5,9 +5,7 @@ DATA_FILES = []
 OPTIONS = {
     "argv_emulation": False,
     "iconfile": "timerpro.icns",
-    "frameworks": [
-        "/opt/anaconda3/envs/cursor/lib/libffi.8.dylib",
-    ],
+    "frameworks": [],
     "plist": {
         "CFBundleName": "TimerPro",
         "CFBundleDisplayName": "TimerPro",
