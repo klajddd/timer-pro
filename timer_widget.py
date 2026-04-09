@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QPushButton, QSizeGrip,
 )
 from PyQt6.QtCore import Qt, QPoint, QTimer, QEvent, pyqtSlot
-from PyQt6.QtGui import QFont, QCursor, QKeyEvent, QPainter
+from PyQt6.QtGui import QFont, QFontMetrics, QCursor, QKeyEvent, QPainter
 
 from timer_engine import TimerEngine
 from nl_parser import parse
@@ -435,11 +435,14 @@ class TimerWidget(QWidget):
         for btn in (self._settings_btn, self._close_btn):
             btn.setFont(_ui_font(max(7, int(_BF_TOPX * s))))
 
-        # Prevent the window from being narrower than the widest time string
-        from PyQt6.QtGui import QFontMetrics
+        # Prevent the window from being narrower than the current time string
         fm = QFontMetrics(time_font)
-        needed_w = fm.horizontalAdvance("0:00:00") + 52 + 24  # margins + breathing room
-        self.setMinimumWidth(max(200, needed_w))
+        text = self._countdown.text() or "00:00"
+        needed_w = fm.horizontalAdvance(text) + 52 + 24  # margins + breathing room
+        min_w = max(200, needed_w)
+        self.setMinimumWidth(min_w)
+        if self.width() < min_w:
+            self.resize(min_w, self.height())
 
     # ── Public: apply theme (called live by SettingsWidget) ───────────
 
@@ -456,6 +459,7 @@ class TimerWidget(QWidget):
     def _on_tick(self, remaining_ms: int):
         if self._engine.state != TimerEngine.FINISHED:
             self._countdown.setText(_fmt(remaining_ms))
+            self._rescale()
 
     @pyqtSlot(str)
     def _on_state(self, state: str):
@@ -479,6 +483,7 @@ class TimerWidget(QWidget):
             self._input.clearFocus()
             self.setFocus()
             self._engine.load(result["seconds"])
+            self._rescale()
 
     def _countdown_clicked(self, _):
         pass
