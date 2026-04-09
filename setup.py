@@ -1,26 +1,13 @@
-import subprocess
 from setuptools import setup
-
-
-def _find_libffi():
-    """Locate libffi dynamically so the path isn't hardcoded."""
-    try:
-        out = subprocess.check_output(
-            ["find", "/opt/homebrew", "/opt/anaconda3", "/usr/local",
-             "-name", "libffi*.dylib", "-maxdepth", "8"],
-            stderr=subprocess.DEVNULL,
-        ).decode().splitlines()
-        return [out[0]] if out else []
-    except Exception:
-        return []
-
 
 APP = ["app.py"]
 DATA_FILES = []
 OPTIONS = {
     "argv_emulation": False,
     "iconfile": "timerpro.icns",
-    "frameworks": _find_libffi(),
+    "frameworks": [
+        "/opt/anaconda3/envs/cursor/lib/libffi.8.dylib",
+    ],
     "plist": {
         "CFBundleName": "TimerPro",
         "CFBundleDisplayName": "TimerPro",
