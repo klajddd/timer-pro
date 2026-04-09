@@ -483,6 +483,8 @@ class TimerWidget(QWidget):
             self._input.clearFocus()
             self.setFocus()
             self._engine.load(result["seconds"])
+            self._countdown.setText(_fmt_seconds(result["seconds"]))
+            self.resize(_BASE_W, _BASE_H)
             self._rescale()
 
     def _countdown_clicked(self, _):
