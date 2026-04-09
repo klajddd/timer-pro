@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(file *.png)",
+      "Read(//usr/local/**)",
+      "Read(//opt/**)",
+      "Bash(python3 -c \"import sys; print\\(sys.prefix\\)\")"
+    ]
+  }
+}
