@@ -25,10 +25,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QPoint, QTimer, QEvent, pyqtSlot
 from PyQt6.QtGui import QFont, QFontMetrics, QCursor, QKeyEvent, QPainter
 
-from timer_engine import TimerEngine
+from timer_engine import TimerEngine, StopwatchEngine
 from nl_parser import parse
+import random
 from presets import random_label
 from sound import LoopingSound
+from zen_messages import random_message
 
 
 # ── Base geometry (fonts scale with window) ───────────────────────────
@@ -44,6 +46,20 @@ _BF_INPUT = 17
 _BF_STOP  = 14
 
 _FIN_CLR = "#c0504a"   # soft dry red on finish
+
+# ── Curated theme pairings (fg, bg) ──────────────────────────────────
+_THEMES = [
+    ("#ffffff", "#0d0d0d"),   # classic void
+    ("#e8e8e8", "#111318"),   # soft white / ink
+    ("#c8950a", "#1a1a2e"),   # amber / midnight
+    ("#4fc3f7", "#0f2027"),   # sky / deep sea
+    ("#81c784", "#0e1a0e"),   # sage / forest
+    ("#f48fb1", "#12001a"),   # rose / plum
+    ("#ce93d8", "#12001a"),   # lavender / plum
+    ("#80cbc4", "#001a1a"),   # teal / abyss
+    ("#ffb74d", "#1a120b"),   # apricot / espresso
+    ("#ef9a9a", "#1b1b1b"),   # coral / coal
+]
 
 
 # ── Color helpers ─────────────────────────────────────────────────────
@@ -68,13 +84,13 @@ def _lighten(color: str, factor: float) -> str:
 # ── Fonts ─────────────────────────────────────────────────────────────
 
 def _ui_font(size: int, weight=QFont.Weight.Light) -> QFont:
-    f = QFont("SF Pro Display", size, weight)
+    f = QFont(".AppleSystemUIFont", size, weight)
     f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
     return f
 
 
 def _label_font(size: int) -> QFont:
-    f = QFont("SF Pro Display", size, QFont.Weight.Medium)
+    f = QFont(".AppleSystemUIFont", size, QFont.Weight.Medium)
     f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
     return f
 
@@ -122,13 +138,18 @@ class TimerWidget(QWidget):
         self._pin_on_top = False
         self._sound = LoopingSound()
         self._settings_win = None
+        self._mode = "timer"   # "timer" | "stopwatch"
+        self._zen_toast = None
 
-        self._color_fg = "#ffffff"
-        self._color_bg = "#0d0d0d"
+        self._color_fg, self._color_bg = random.choice(_THEMES)
 
         self._engine = TimerEngine(self)
         self._engine.tick.connect(self._on_tick)
         self._engine.state_changed.connect(self._on_state)
+
+        self._sw_engine = StopwatchEngine(self)
+        self._sw_engine.tick.connect(self._on_sw_tick)
+        self._sw_engine.state_changed.connect(self._on_sw_state)
 
         self._build_ui()
         self._apply_state(TimerEngine.IDLE)
@@ -160,19 +181,44 @@ class TimerWidget(QWidget):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
 
-        self._pin_btn = QPushButton("pin")
+        # ── mode toggle (left side) ───────────────────────────────────
+        self._mode_timer_btn = QPushButton("timer")
+        self._mode_timer_btn.setFont(_ui_font(_BF_TOP))
+        self._mode_timer_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._mode_timer_btn.clicked.connect(lambda: self._set_mode("timer"))
+        self._mode_timer_btn.setObjectName("modeBtn")
+
+        self._mode_sep = QLabel("·")
+        self._mode_sep.setFont(_ui_font(_BF_TOP))
+        self._mode_sep.setObjectName("modeSep")
+
+        self._mode_sw_btn = QPushButton("stopwatch")
+        self._mode_sw_btn.setFont(_ui_font(_BF_TOP))
+        self._mode_sw_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._mode_sw_btn.clicked.connect(lambda: self._set_mode("stopwatch"))
+        self._mode_sw_btn.setObjectName("modeBtn")
+
+        # ── right-side controls ───────────────────────────────────────
+        self._zen_btn = QPushButton("zen")
+        self._zen_btn.setFont(_ui_font(_BF_TOP))
+        self._zen_btn.setToolTip("Show a moment of calm")
+        self._zen_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._zen_btn.clicked.connect(self._show_zen)
+        self._zen_btn.setObjectName("topBtn")
+
+        self._new_btn = QPushButton("+")
+        self._new_btn.setFont(_ui_font(_BF_TOPX))
+        self._new_btn.setToolTip("New timer")
+        self._new_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._new_btn.clicked.connect(self._spawn_new)
+        self._new_btn.setObjectName("topBtn")
+
+        self._pin_btn = QPushButton("◎")
         self._pin_btn.setFont(_ui_font(_BF_TOP))
         self._pin_btn.setToolTip("Toggle always on top")
         self._pin_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._pin_btn.clicked.connect(self._toggle_pin)
         self._pin_btn.setObjectName("topBtn")
-
-        self._new_btn = QPushButton("new")
-        self._new_btn.setFont(_ui_font(_BF_TOP))
-        self._new_btn.setToolTip("New timer")
-        self._new_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._new_btn.clicked.connect(self._spawn_new)
-        self._new_btn.setObjectName("topBtn")
 
         self._settings_btn = QPushButton("⚙")
         self._settings_btn.setFont(_ui_font(_BF_TOPX))
@@ -187,12 +233,20 @@ class TimerWidget(QWidget):
         self._close_btn.clicked.connect(self.close)
         self._close_btn.setObjectName("topBtn")
 
-        top.addWidget(self._pin_btn)
+        top.addWidget(self._mode_timer_btn)
+        top.addSpacing(4)
+        top.addWidget(self._mode_sep)
+        top.addSpacing(4)
+        top.addWidget(self._mode_sw_btn)
+        top.addStretch()
+        top.addWidget(self._zen_btn)
         top.addSpacing(10)
         top.addWidget(self._new_btn)
-        top.addStretch()
+        top.addSpacing(10)
+        top.addWidget(self._pin_btn)
+        top.addSpacing(10)
         top.addWidget(self._settings_btn)
-        top.addSpacing(8)
+        top.addSpacing(10)
         top.addWidget(self._close_btn)
         vbox.addLayout(top)
 
@@ -273,6 +327,9 @@ class TimerWidget(QWidget):
         grip_row.addWidget(grip, 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
         vbox.addLayout(grip_row)
 
+        # mark timer as active mode on start
+        self._mode_timer_btn.setObjectName("modeBtnActive")
+
         self._apply_stylesheet()
 
     # ── Stylesheet (theme-aware) ──────────────────────────────────────
@@ -298,6 +355,25 @@ class TimerWidget(QWidget):
             }}
             QPushButton#topBtn:hover {{
                 color: {hov};
+            }}
+            QPushButton#modeBtn {{
+                background: transparent;
+                color: {dim};
+                border: none;
+                padding: 0;
+            }}
+            QPushButton#modeBtn:hover {{
+                color: {hov};
+            }}
+            QPushButton#modeBtnActive {{
+                background: transparent;
+                color: {fg};
+                border: none;
+                padding: 0;
+            }}
+            QLabel#modeSep {{
+                color: {_dim(fg, 0.18)};
+                background: transparent;
             }}
             QPushButton#ctrlBtn {{
                 background: transparent;
@@ -430,10 +506,11 @@ class TimerWidget(QWidget):
         self._restart_btn.setFont(_ui_font(max(9, int(_BF_CTRL2 * s))))
         self._input.setFont(_mono_font(max(9, int(_BF_INPUT * s))))
         self._stop_sound_btn.setFont(_ui_font(max(8, int(_BF_STOP * s))))
-        for btn in (self._pin_btn, self._new_btn):
+        for btn in (self._pin_btn, self._zen_btn, self._mode_timer_btn, self._mode_sw_btn):
             btn.setFont(_ui_font(max(7, int(_BF_TOP * s))))
-        for btn in (self._settings_btn, self._close_btn):
+        for btn in (self._new_btn, self._settings_btn, self._close_btn):
             btn.setFont(_ui_font(max(7, int(_BF_TOPX * s))))
+        self._mode_sep.setFont(_ui_font(max(7, int(_BF_TOP * s))))
 
         # Prevent the window from being narrower than the current time string
         fm = QFontMetrics(time_font)
@@ -453,6 +530,40 @@ class TimerWidget(QWidget):
             self._color_bg = bg
         self._apply_stylesheet()
 
+    # ── Mode toggle ───────────────────────────────────────────────────
+
+    def _set_mode(self, mode: str):
+        if mode == self._mode:
+            return
+        # stop everything in old mode
+        if self._mode == "timer":
+            self._engine.reset()
+            self._sound.stop()
+        else:
+            self._sw_engine.reset()
+
+        self._mode = mode
+
+        # update toggle button appearance
+        if mode == "timer":
+            self._mode_timer_btn.setObjectName("modeBtnActive")
+            self._mode_sw_btn.setObjectName("modeBtn")
+            self._input.setVisible(True)
+            self._input.setPlaceholderText("25m   ·   1h30m   ·   10:30pm")
+            self._apply_state(TimerEngine.IDLE)
+        else:
+            self._mode_timer_btn.setObjectName("modeBtn")
+            self._mode_sw_btn.setObjectName("modeBtnActive")
+            self._input.setVisible(False)
+            self._stop_sound_btn.setVisible(False)
+            self._countdown.setText("00:00")
+            self._countdown.setStyleSheet(f"color: {self._color_fg};")
+            self._play_btn.setText("▶")
+            fg = self._color_fg
+            self._set_ctrl_colors(_dim(fg, 0.22), _dim(fg, 0.22))
+
+        self._apply_stylesheet()
+
     # ── Slots ─────────────────────────────────────────────────────────
 
     @pyqtSlot(int)
@@ -464,6 +575,25 @@ class TimerWidget(QWidget):
     @pyqtSlot(str)
     def _on_state(self, state: str):
         self._apply_state(state)
+
+    @pyqtSlot(int)
+    def _on_sw_tick(self, elapsed_ms: int):
+        self._countdown.setText(_fmt(elapsed_ms))
+        self._rescale()
+
+    @pyqtSlot(str)
+    def _on_sw_state(self, state: str):
+        fg = self._color_fg
+        if state == StopwatchEngine.IDLE:
+            self._countdown.setText("00:00")
+            self._play_btn.setText("▶")
+            self._set_ctrl_colors(_dim(fg, 0.22), _dim(fg, 0.22))
+        elif state == StopwatchEngine.RUNNING:
+            self._play_btn.setText("⏸")
+            self._set_ctrl_colors(fg, fg)
+        elif state == StopwatchEngine.PAUSED:
+            self._play_btn.setText("▶")
+            self._set_ctrl_colors(fg, fg)
 
     def _on_enter(self):
         text = self._input.text().strip()
@@ -491,7 +621,9 @@ class TimerWidget(QWidget):
         pass
 
     def _on_play_clicked(self):
-        if self._engine.state == TimerEngine.FINISHED:
+        if self._mode == "stopwatch":
+            self._sw_engine.toggle()
+        elif self._engine.state == TimerEngine.FINISHED:
             self._sound.stop()
             self._stop_sound_btn.setVisible(False)
             self._engine.restart()
@@ -499,9 +631,12 @@ class TimerWidget(QWidget):
             self._engine.toggle_play_pause()
 
     def _on_restart_clicked(self):
-        self._sound.stop()
-        self._stop_sound_btn.setVisible(False)
-        self._engine.restart()
+        if self._mode == "stopwatch":
+            self._sw_engine.reset()
+        else:
+            self._sound.stop()
+            self._stop_sound_btn.setVisible(False)
+            self._engine.restart()
 
     def _on_stop_sound(self):
         self._sound.stop()
@@ -532,6 +667,20 @@ class TimerWidget(QWidget):
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         except Exception:
             pass
+
+    # ── Zen toast ─────────────────────────────────────────────────────
+
+    def _show_zen(self):
+        from zen_toast import ZenToast
+        if self._zen_toast is not None:
+            try:
+                self._zen_toast.close()
+            except RuntimeError:
+                pass
+            self._zen_toast = None
+        self._zen_toast = ZenToast(random_message(), self)
+        self._zen_toast.destroyed.connect(lambda: setattr(self, "_zen_toast", None))
+        self._zen_toast.show()
 
     # ── Settings ──────────────────────────────────────────────────────
 
@@ -564,11 +713,11 @@ class TimerWidget(QWidget):
         flags = self.windowFlags()
         if self._pin_on_top:
             flags |= Qt.WindowType.WindowStaysOnTopHint
-            self._pin_btn.setText("pinned")
-            self._pin_btn.setStyleSheet(f"color: {_dim(self._color_fg, 0.53)};")
+            self._pin_btn.setText("◉")
+            self._pin_btn.setStyleSheet(f"QPushButton {{ color: {self._color_fg}; background: transparent; border: none; }}")
         else:
             flags &= ~Qt.WindowType.WindowStaysOnTopHint
-            self._pin_btn.setText("pin")
+            self._pin_btn.setText("◎")
             self._pin_btn.setStyleSheet("")
         self.setWindowFlags(flags)
         self.show()
@@ -578,13 +727,19 @@ class TimerWidget(QWidget):
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         if key == Qt.Key.Key_Escape:
-            self._sound.stop()
-            self._engine.reset()
-            self._input.clear()
-            self._stop_sound_btn.setVisible(False)
+            if self._mode == "stopwatch":
+                self._sw_engine.reset()
+            else:
+                self._sound.stop()
+                self._engine.reset()
+                self._input.clear()
+                self._stop_sound_btn.setVisible(False)
         elif key == Qt.Key.Key_Space:
             if not self._input.hasFocus():
-                self._engine.toggle_play_pause()
+                if self._mode == "stopwatch":
+                    self._sw_engine.toggle()
+                else:
+                    self._engine.toggle_play_pause()
                 event.accept()
                 return
         super().keyPressEvent(event)
@@ -618,8 +773,11 @@ class TimerWidget(QWidget):
     def closeEvent(self, event):
         self._sound.stop()
         self._engine.reset()
+        self._sw_engine.reset()
         if self._settings_win:
             self._settings_win.close()
+        if self._zen_toast:
+            self._zen_toast.close()
         super().closeEvent(event)
 
 

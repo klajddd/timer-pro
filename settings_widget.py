@@ -16,7 +16,7 @@ from PyQt6.QtGui import QFont, QCursor
 
 
 def _ui_font(size: int, weight=QFont.Weight.Light) -> QFont:
-    f = QFont("SF Pro Display", size, weight)
+    f = QFont(".AppleSystemUIFont", size, weight)
     f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
     return f
 

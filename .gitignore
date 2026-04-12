@@ -1,5 +1,6 @@
 build/
 dist/
+TimerPro.app/
 __pycache__/
 *.pyc
 *.pyo

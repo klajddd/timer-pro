@@ -10,23 +10,31 @@ Requires:
 
 import sys
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QAction
-from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon, QPixmap, QAction
+from PyQt6.QtCore import Qt, QTimer
 
 from timer_widget import TimerWidget
+from timer_engine import TimerEngine
 
 
 def _make_tray_icon() -> QIcon:
-    """Draw a minimal circle icon for the menu bar."""
-    px = QPixmap(22, 22)
+    """Fully transparent icon — hides the dot, keeps the tray item alive."""
+    px = QPixmap(1, 1)
     px.fill(Qt.GlobalColor.transparent)
-    p = QPainter(px)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setBrush(QColor("#e8e8e8"))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawEllipse(5, 5, 12, 12)
-    p.end()
     return QIcon(px)
+
+
+def _set_menubar_text(text: str):
+    """Set text next to the tray icon in the macOS menu bar."""
+    try:
+        from AppKit import NSStatusBar
+        bar = NSStatusBar.systemStatusBar()
+        # store on the function itself so it persists
+        if not hasattr(_set_menubar_text, "_item"):
+            _set_menubar_text._item = bar.statusItemWithLength_(-1)  # NSVariableStatusItemLength
+        _set_menubar_text._item.button().setTitle_(text)
+    except Exception:
+        pass
 
 
 class App(QApplication):
@@ -58,12 +66,21 @@ class App(QApplication):
         self._tray.activated.connect(self._tray_activated)
         self._tray.show()
 
+        # Menu bar refresh — 500ms is smooth enough without burning CPU
+        self._menubar_timer = QTimer(self)
+        self._menubar_timer.setInterval(500)
+        self._menubar_timer.timeout.connect(self._refresh_menubar)
+        self._menubar_timer.start()
+
         # spawn one timer on launch
         self.spawn_timer()
 
     def spawn_timer(self):
         w = TimerWidget()
         self._widgets.append(w)
+
+        # remove closed widgets from list when they close
+        w.destroyed.connect(lambda: self._widgets.remove(w) if w in self._widgets else None)
 
         # stagger position slightly so new windows don't stack exactly
         offset = len(self._widgets) * 24
@@ -79,6 +96,37 @@ class App(QApplication):
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.spawn_timer()
+
+    def _refresh_menubar(self):
+        """Show label + time of the most urgent timer (running or finished)."""
+        best: TimerWidget | None = None
+        best_ms = float("inf")
+        finished: TimerWidget | None = None
+
+        for w in self._widgets:
+            engine = w._engine
+            if engine.state == TimerEngine.RUNNING:
+                if engine.remaining_ms < best_ms:
+                    best_ms = engine.remaining_ms
+                    best = w
+            elif engine.state == TimerEngine.FINISHED and finished is None:
+                finished = w
+
+        target = best if best is not None else finished
+
+        if target is not None:
+            label = target._label_edit.text().strip() or "Timer"
+            if target._engine.state == TimerEngine.FINISHED:
+                _set_menubar_text(f"{label}  ✓")
+            else:
+                total_s = best_ms // 1000
+                h = total_s // 3600
+                m = (total_s % 3600) // 60
+                s = total_s % 60
+                time_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+                _set_menubar_text(f"{label}  {time_str}")
+        else:
+            _set_menubar_text("")
 
 
 def main():

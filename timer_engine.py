@@ -122,3 +122,65 @@ class TimerEngine(QObject):
     def _set_state(self, state: str):
         self._state = state
         self.state_changed.emit(state)
+
+
+class StopwatchEngine(QObject):
+    tick          = pyqtSignal(int)   # elapsed milliseconds
+    state_changed = pyqtSignal(str)
+
+    IDLE    = "sw_idle"
+    RUNNING = "sw_running"
+    PAUSED  = "sw_paused"
+
+    _INTERVAL_MS = 50
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._state      = self.IDLE
+        self._elapsed_ms = 0
+        self._last_ns    = 0
+
+        self._qtimer = QTimer(self)
+        self._qtimer.setInterval(self._INTERVAL_MS)
+        self._qtimer.timeout.connect(self._on_tick)
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def elapsed_ms(self) -> int:
+        return self._elapsed_ms
+
+    def start(self):
+        if self._state in (self.IDLE, self.PAUSED):
+            self._last_ns = time.monotonic_ns()
+            self._qtimer.start()
+            self._set_state(self.RUNNING)
+
+    def pause(self):
+        if self._state == self.RUNNING:
+            self._qtimer.stop()
+            self._set_state(self.PAUSED)
+
+    def toggle(self):
+        if self._state == self.RUNNING:
+            self.pause()
+        else:
+            self.start()
+
+    def reset(self):
+        self._qtimer.stop()
+        self._elapsed_ms = 0
+        self.tick.emit(0)
+        self._set_state(self.IDLE)
+
+    def _on_tick(self):
+        now_ns = time.monotonic_ns()
+        self._elapsed_ms += (now_ns - self._last_ns) // 1_000_000
+        self._last_ns = now_ns
+        self.tick.emit(self._elapsed_ms)
+
+    def _set_state(self, state: str):
+        self._state = state
+        self.state_changed.emit(state)
